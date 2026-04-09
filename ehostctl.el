@@ -192,6 +192,95 @@
   (ehostctl--notes-set profile "" desc))
 
 
+;;;; Input Validation
+
+(defun ehostctl--valid-ip-p (ip)
+  "Return non-nil if IP is a valid IPv4 or IPv6 address."
+  (or (ehostctl--valid-ipv4-p ip)
+      (ehostctl--valid-ipv6-p ip)))
+
+(defun ehostctl--valid-ipv4-p (ip)
+  "Return non-nil if IP is a valid IPv4 address."
+  (when (string-match-p "\\`[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+\\'" ip)
+    (let ((octets (mapcar #'string-to-number (split-string ip "\\."))))
+      (cl-every (lambda (n) (<= 0 n 255)) octets))))
+
+(defun ehostctl--valid-ipv6-p (ip)
+  "Return non-nil if IP is a valid IPv6 address."
+  (let ((addr (downcase ip)))
+    (or (string-match-p
+         "\\`\\(?:[0-9a-f]\\{1,4\\}:\\)\\{7\\}[0-9a-f]\\{1,4\\}\\'" addr)
+        (string-match-p
+         "\\`\\(?:[0-9a-f]\\{1,4\\}:\\)*::\\(?:[0-9a-f]\\{1,4\\}:\\)*[0-9a-f]\\{0,4\\}\\'" addr)
+        (string= addr "::"))))
+
+;;;; Multi-line Entry Parsing
+
+(defun ehostctl--parse-host-lines (text)
+  "Parse TEXT into list of (IP DOMAIN...) entries.
+Each line should be \"IP DOMAIN1 [DOMAIN2 ...]\".
+Empty lines and comment lines (starting with #) are skipped.
+Signal error on invalid IP or missing domains."
+  (let (entries (lineno 0))
+    (dolist (line (split-string text "\n"))
+      (cl-incf lineno)
+      (let* ((trimmed (string-trim line))
+             (parts (split-string trimmed)))
+        (unless (or (string-empty-p trimmed) (string-prefix-p "#" trimmed))
+          (let ((ip (car parts))
+                (domains (cdr parts)))
+            (unless (ehostctl--valid-ip-p ip)
+              (user-error "Line %d: invalid IP address '%s'" lineno ip))
+            (unless domains
+              (user-error "Line %d: no domains for IP '%s'" lineno ip))
+            (push (cons ip domains) entries)))))
+    (nreverse entries)))
+
+;;;; Entry Edit Buffer
+
+(defvar-local ehostctl--edit-callback nil
+  "Callback invoked with parsed entries on confirmation.")
+
+(defvar-keymap ehostctl-edit-mode-map
+  :doc "Keymap for `ehostctl-edit-mode'."
+  "C-c C-c" #'ehostctl-edit-confirm
+  "C-c C-k" #'ehostctl-edit-cancel)
+
+(define-derived-mode ehostctl-edit-mode text-mode "EhostEdit"
+  "Mode for editing host entries before submitting to hostctl."
+  (setq header-line-format
+        (substitute-command-keys
+         "\\<ehostctl-edit-mode-map>\
+Edit entries: IP DOMAIN... per line.  \
+\\[ehostctl-edit-confirm] confirm, \
+\\[ehostctl-edit-cancel] cancel.")))
+
+(defun ehostctl-edit-confirm ()
+  "Parse buffer entries and invoke the stored callback."
+  (interactive)
+  (let ((entries (ehostctl--parse-host-lines (buffer-string)))
+        (cb ehostctl--edit-callback))
+    (unless entries
+      (user-error "No valid entries"))
+    (quit-window t)
+    (funcall cb entries)))
+
+(defun ehostctl-edit-cancel ()
+  "Cancel editing without adding entries."
+  (interactive)
+  (quit-window t)
+  (message "Cancelled"))
+
+(defun ehostctl--pop-edit-buffer (profile callback)
+  "Open an edit buffer for PROFILE, calling CALLBACK with parsed entries."
+  (let ((buf (get-buffer-create (format "*ehostctl-add: %s*" profile))))
+    (with-current-buffer buf
+      (ehostctl-edit-mode)
+      (erase-buffer)
+      (insert "# IP DOMAIN1 [DOMAIN2 ...]\n127.0.0.1 ")
+      (setq ehostctl--edit-callback callback))
+    (pop-to-buffer buf)))
+
 ;;;; Profile Name Normalization
 
 (defun ehostctl--normalize-profile-name (name)
@@ -410,18 +499,21 @@ Return the list of hosts copied."
     (revert-buffer)))
 
 (defun ehostctl-profile-add ()
-  "Add a new host entry to a profile."
+  "Add host entries to a profile via an edit buffer."
   (interactive)
-  (let* ((profile (ehostctl--normalize-profile-name
-                   (read-string "Profile name: ")))
-         (ip (read-string "IP address: " "127.0.0.1"))
-         (domains (read-string "Domains (space separated): ")))
-    (apply #'ehostctl--run-sudo!
-           "add" "domains" profile
-           "--ip" ip
-           (split-string domains))
-    (message "Added to profile: %s" profile)
-    (revert-buffer)))
+  (let ((profile (ehostctl--normalize-profile-name
+                  (read-string "Profile name: "))))
+    (ehostctl--pop-edit-buffer
+     profile
+     (lambda (entries)
+       (dolist (e entries)
+         (apply #'ehostctl--run-sudo!
+                "add" "domains" profile "--ip" (car e) (cdr e)))
+       (message "Added %d entr%s to profile: %s"
+                (length entries)
+                (if (= 1 (length entries)) "y" "ies")
+                profile)
+       (revert-buffer)))))
 
 (defun ehostctl-backup ()
   "Backup the hosts file."
@@ -499,16 +591,20 @@ Return the list of hosts copied."
     (switch-to-buffer buf)))
 
 (defun ehostctl-host-add ()
-  "Add a host entry to the current profile."
+  "Add host entries to the current profile via an edit buffer."
   (interactive)
-  (let* ((ip (read-string "IP address: " "127.0.0.1"))
-         (domains (read-string "Domains (space separated): ")))
-    (apply #'ehostctl--run-sudo!
-           "add" "domains" ehostctl--current-profile
-           "--ip" ip
-           (split-string domains))
-    (message "Added to profile: %s" ehostctl--current-profile)
-    (revert-buffer)))
+  (let ((profile ehostctl--current-profile))
+    (ehostctl--pop-edit-buffer
+     profile
+     (lambda (entries)
+       (dolist (e entries)
+         (apply #'ehostctl--run-sudo!
+                "add" "domains" profile "--ip" (car e) (cdr e)))
+       (message "Added %d entr%s to profile: %s"
+                (length entries)
+                (if (= 1 (length entries)) "y" "ies")
+                profile)
+       (revert-buffer)))))
 
 (defun ehostctl-host-describe ()
   "Add or edit a description for the host entry at point."
@@ -619,6 +715,7 @@ Return the list of hosts copied."
 (with-eval-after-load 'evil
   (evil-set-initial-state 'ehostctl-profile-list-mode 'normal)
   (evil-set-initial-state 'ehostctl-host-list-mode 'normal)
+  (evil-set-initial-state 'ehostctl-edit-mode 'insert)
 
   (evil-define-key* 'normal ehostctl-profile-list-mode-map
     (kbd "RET") #'ehostctl-profile-enter
