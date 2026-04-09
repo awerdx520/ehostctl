@@ -191,6 +191,7 @@
   "Set DESC for PROFILE.  Empty string removes the description."
   (ehostctl--notes-set profile "" desc))
 
+
 ;;;; Data Model
 
 (defun ehostctl--get-profiles ()
@@ -207,6 +208,10 @@
               (puthash name (list name status (1+ (nth 2 existing))) table)
             (puthash name (list name status 1) table)))))
     (hash-table-values table)))
+
+(defun ehostctl--profile-names ()
+  "Return list of all profile names."
+  (mapcar #'car (ehostctl--get-profiles)))
 
 (defun ehostctl--get-hosts (profile)
   "Return list of (IP HOST STATUS) for PROFILE."
@@ -243,6 +248,9 @@
   "t"   #'ehostctl-profile-toggle
   "D"   #'ehostctl-profile-remove
   "a"   #'ehostctl-profile-add
+  "c"   #'ehostctl-profile-copy
+  "m"   #'ehostctl-profile-merge
+  "r"   #'ehostctl-profile-rename
   "n"   #'ehostctl-profile-describe
   "b"   #'ehostctl-backup
   "R"   #'ehostctl-restore
@@ -322,6 +330,71 @@
     (revert-buffer)
     (message (if (string-empty-p new-desc) "Description removed" "Description saved"))))
 
+(defun ehostctl--copy-profile-entries (source target)
+  "Copy all host entries and annotations from SOURCE to TARGET profile.
+Return the list of hosts copied."
+  (let ((hosts (ehostctl--get-hosts source)))
+    (dolist (h hosts)
+      (ehostctl--run-sudo! "add" "domains" target "--ip" (nth 0 h) (nth 1 h)))
+    (let ((pdesc (ehostctl--profile-desc-get source)))
+      (when (and (not (string-empty-p pdesc))
+                 (string-empty-p (ehostctl--profile-desc-get target)))
+        (ehostctl--profile-desc-set target pdesc)))
+    (dolist (h hosts)
+      (let ((desc (ehostctl--notes-get source (nth 1 h))))
+        (when (and (not (string-empty-p desc))
+                   (string-empty-p (ehostctl--notes-get target (nth 1 h))))
+          (ehostctl--notes-set target (nth 1 h) desc))))
+    hosts))
+
+(defun ehostctl--remove-profile-annotations (profile hosts)
+  "Remove all annotations for PROFILE and its HOSTS."
+  (ehostctl--profile-desc-set profile "")
+  (dolist (h hosts)
+    (ehostctl--notes-set profile (nth 1 h) "")))
+
+(defun ehostctl-profile-copy ()
+  "Copy the profile at point to a new profile."
+  (interactive)
+  (let* ((source (ehostctl--profile-at-point))
+         (target (read-string (format "Copy '%s' to: " source))))
+    (when (string-empty-p target)
+      (user-error "Profile name cannot be empty"))
+    (ehostctl--copy-profile-entries source target)
+    (message "Copied profile '%s' → '%s'" source target)
+    (revert-buffer)))
+
+(defun ehostctl-profile-merge ()
+  "Merge the profile at point into another, removing the source."
+  (interactive)
+  (let* ((source (ehostctl--profile-at-point))
+         (target (completing-read
+                  (format "Merge '%s' into: " source)
+                  (remove source (ehostctl--profile-names))
+                  nil nil)))
+    (when (string-empty-p target)
+      (user-error "Profile name cannot be empty"))
+    (when (yes-or-no-p (format "Merge '%s' into '%s' and remove '%s'? "
+                               source target source))
+      (let ((hosts (ehostctl--copy-profile-entries source target)))
+        (ehostctl--run-sudo! "remove" source)
+        (ehostctl--remove-profile-annotations source hosts))
+      (message "Merged '%s' into '%s'" source target)
+      (revert-buffer))))
+
+(defun ehostctl-profile-rename ()
+  "Rename the profile at point."
+  (interactive)
+  (let* ((old-name (ehostctl--profile-at-point))
+         (new-name (read-string (format "Rename '%s' to: " old-name))))
+    (when (string-empty-p new-name)
+      (user-error "Profile name cannot be empty"))
+    (let ((hosts (ehostctl--copy-profile-entries old-name new-name)))
+      (ehostctl--run-sudo! "remove" old-name)
+      (ehostctl--remove-profile-annotations old-name hosts))
+    (message "Renamed '%s' → '%s'" old-name new-name)
+    (revert-buffer)))
+
 (defun ehostctl-profile-add ()
   "Add a new host entry to a profile."
   (interactive)
@@ -363,18 +436,20 @@
                        (let ((ip (nth 0 h))
                              (host (nth 1 h))
                              (status (nth 2 h))
-                             (note (ehostctl--notes-get
+                             (desc (ehostctl--notes-get
                                     ehostctl--current-profile (nth 1 h))))
                          (list idx (vector ip host
                                           (ehostctl--propertize-status status)
-                                          note))))
+                                          desc))))
                      hosts)))
 
 (defvar-keymap ehostctl-host-list-mode-map
   :doc "Keymap for `ehostctl-host-list-mode'."
   "a" #'ehostctl-host-add
   "d" #'ehostctl-host-remove
-  "n" #'ehostctl-host-annotate
+  "c" #'ehostctl-host-copy
+  "m" #'ehostctl-host-move
+  "n" #'ehostctl-host-describe
   "?" #'ehostctl-host-transient)
 
 (define-derived-mode ehostctl-host-list-mode tabulated-list-mode "Hosts"
@@ -382,7 +457,7 @@
   (setq tabulated-list-format [("IP" 20 t)
                                 ("Host" 40 t)
                                 ("Status" 8 t)
-                                ("Note" 30 t)]
+                                ("Description" 30 t)]
         tabulated-list-padding 2
         revert-buffer-function #'ehostctl--host-revert)
   (tabulated-list-init-header)
@@ -420,17 +495,61 @@
     (message "Added to profile: %s" ehostctl--current-profile)
     (revert-buffer)))
 
-(defun ehostctl-host-annotate ()
-  "Add or edit a note for the host entry at point."
+(defun ehostctl-host-describe ()
+  "Add or edit a description for the host entry at point."
   (interactive)
   (let* ((entry (or (tabulated-list-get-entry)
                     (user-error "No entry at point")))
          (host (aref entry 1))
-         (old-note (ehostctl--notes-get ehostctl--current-profile host))
-         (new-note (read-string (format "Note for %s: " host) old-note)))
-    (ehostctl--notes-set ehostctl--current-profile host new-note)
+         (old-desc (ehostctl--notes-get ehostctl--current-profile host))
+         (new-desc (read-string (format "Description for %s: " host) old-desc)))
+    (ehostctl--notes-set ehostctl--current-profile host new-desc)
     (revert-buffer)
-    (message (if (string-empty-p new-note) "Note removed" "Note saved"))))
+    (message (if (string-empty-p new-desc) "Description removed" "Description saved"))))
+
+(defun ehostctl-host-copy ()
+  "Copy the host entry at point to another profile."
+  (interactive)
+  (let* ((entry (or (tabulated-list-get-entry)
+                    (user-error "No entry at point")))
+         (ip (aref entry 0))
+         (host (aref entry 1))
+         (target (completing-read
+                  (format "Copy '%s' to profile: " host)
+                  (remove ehostctl--current-profile
+                          (ehostctl--profile-names))
+                  nil nil)))
+    (when (string-empty-p target)
+      (user-error "Profile name cannot be empty"))
+    (ehostctl--run-sudo! "add" "domains" target "--ip" ip host)
+    (let ((desc (ehostctl--notes-get ehostctl--current-profile host)))
+      (unless (string-empty-p desc)
+        (ehostctl--notes-set target host desc)))
+    (message "Copied '%s' → profile '%s'" host target)
+    (revert-buffer)))
+
+(defun ehostctl-host-move ()
+  "Move the host entry at point to another profile."
+  (interactive)
+  (let* ((entry (or (tabulated-list-get-entry)
+                    (user-error "No entry at point")))
+         (ip (aref entry 0))
+         (host (aref entry 1))
+         (target (completing-read
+                  (format "Move '%s' to profile: " host)
+                  (remove ehostctl--current-profile
+                          (ehostctl--profile-names))
+                  nil nil)))
+    (when (string-empty-p target)
+      (user-error "Profile name cannot be empty"))
+    (ehostctl--run-sudo! "add" "domains" target "--ip" ip host)
+    (let ((desc (ehostctl--notes-get ehostctl--current-profile host)))
+      (unless (string-empty-p desc)
+        (ehostctl--notes-set target host desc))
+      (ehostctl--notes-set ehostctl--current-profile host ""))
+    (ehostctl--run-sudo! "remove" "domains" ehostctl--current-profile host)
+    (message "Moved '%s' → profile '%s'" host target)
+    (revert-buffer)))
 
 (defun ehostctl-host-remove ()
   "Remove the host entry at point from the current profile."
@@ -454,6 +573,9 @@
    ("t" "Toggle"   ehostctl-profile-toggle)
    ("D" "Remove"   ehostctl-profile-remove)
    ("a" "Add"      ehostctl-profile-add)
+   ("c" "Copy"     ehostctl-profile-copy)
+   ("m" "Merge…"   ehostctl-profile-merge)
+   ("r" "Rename"   ehostctl-profile-rename)
    ("n" "Describe" ehostctl-profile-describe)]
   ["Global"
    ("b" "Backup"  ehostctl-backup)
@@ -465,7 +587,9 @@
   ["Host Actions"
    ("a" "Add"      ehostctl-host-add)
    ("d" "Remove"   ehostctl-host-remove)
-   ("n" "Annotate" ehostctl-host-annotate)]
+   ("c" "Copy to…" ehostctl-host-copy)
+   ("m" "Move to…" ehostctl-host-move)
+   ("n" "Describe" ehostctl-host-describe)]
   ["Navigation"
    ("g" "Refresh" revert-buffer)
    ("q" "Quit"    quit-window)])
@@ -484,6 +608,9 @@
     "t"   #'ehostctl-profile-toggle
     "x"   #'ehostctl-profile-remove
     "a"   #'ehostctl-profile-add
+    "c"   #'ehostctl-profile-copy
+    "m"   #'ehostctl-profile-merge
+    "r"   #'ehostctl-profile-rename
     "n"   #'ehostctl-profile-describe
     "b"   #'ehostctl-backup
     "R"   #'ehostctl-restore
@@ -494,7 +621,9 @@
   (evil-define-key 'normal ehostctl-host-list-mode-map
     "a"   #'ehostctl-host-add
     "x"   #'ehostctl-host-remove
-    "n"   #'ehostctl-host-annotate
+    "c"   #'ehostctl-host-copy
+    "m"   #'ehostctl-host-move
+    "n"   #'ehostctl-host-describe
     "gr"  #'revert-buffer
     "q"   #'quit-window
     "?"   #'ehostctl-host-transient))

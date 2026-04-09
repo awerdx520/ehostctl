@@ -57,6 +57,10 @@ M-x ehostctl
 | `t` | `t` | `t` | 切换 profile 状态 |
 | 删除 | `D` | `x` | 删除 profile |
 | `a` | `a` | `a` | 添加新 profile |
+| `c` | `c` | `c` | 复制 profile |
+| `m` | `m` | `m` | 合并到其他 profile |
+| `r` | `r` | `r` | 重命名 profile |
+| `n` | `n` | `n` | 编辑 profile 描述 |
 | `b` | `b` | `b` | 备份 hosts 文件 |
 | `R` | `R` | `R` | 从备份恢复 |
 | 刷新 | `g` | `gr` | 刷新列表 |
@@ -69,6 +73,9 @@ M-x ehostctl
 |----|-------|------|------|
 | `a` | `a` | `a` | 添加 host 条目 |
 | 删除 | `d` | `x` | 删除 host 条目 |
+| `c` | `c` | `c` | 复制到其他 profile |
+| `m` | `m` | `m` | 移动到其他 profile |
+| `n` | `n` | `n` | 编辑 host 描述 |
 | 刷新 | `g` | `gr` | 刷新列表 |
 | 退出 | `q` | `q` | 返回 profile 列表 |
 | `?` | `?` | `?` | 打开操作菜单 |
