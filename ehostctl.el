@@ -19,6 +19,26 @@
 (require 'json)
 (require 'transient)
 
+;;;; Faces
+
+(defface ehostctl-stripe-face
+  '((((class color) (background light))
+     :background "#f0f0f0")
+    (((class color) (background dark))
+     :background "#2a2a2a"))
+  "Face for alternating row stripes."
+  :group 'ehostctl)
+
+(defface ehostctl-status-on-face
+  '((t :foreground "#50c878" :weight bold))
+  "Face for enabled (on) status."
+  :group 'ehostctl)
+
+(defface ehostctl-status-off-face
+  '((t :foreground "#ff6b6b" :weight bold))
+  "Face for disabled (off) status."
+  :group 'ehostctl)
+
 ;;;; Custom Variables
 
 (defgroup ehostctl nil
@@ -79,6 +99,31 @@
     (if (or (string-empty-p trimmed) (string= trimmed "null"))
         nil
       (json-read-from-string trimmed))))
+
+;;;; Stripe Overlay
+
+(defun ehostctl--apply-stripes ()
+  "Apply alternating row background colors to the current buffer."
+  (remove-overlays (point-min) (point-max) 'ehostctl-stripe t)
+  (save-excursion
+    (goto-char (point-min))
+    (let ((row 0))
+      (while (not (eobp))
+        (when (cl-oddp row)
+          (let ((ov (make-overlay (line-beginning-position) (line-end-position))))
+            (overlay-put ov 'face 'ehostctl-stripe-face)
+            (overlay-put ov 'ehostctl-stripe t)))
+        (setq row (1+ row))
+        (forward-line 1)))))
+
+;;;; Status Propertize
+
+(defun ehostctl--propertize-status (status)
+  "Return STATUS string with face applied."
+  (propertize status 'face
+              (if (string= status "on")
+                  'ehostctl-status-on-face
+                'ehostctl-status-off-face)))
 
 ;;;; Notes Storage
 
@@ -168,7 +213,8 @@
             (let ((name (nth 0 p))
                   (status (nth 1 p))
                   (count (nth 2 p)))
-              (list name (vector name status
+              (list name (vector name
+                                 (ehostctl--propertize-status status)
                                  (number-to-string count)
                                  (ehostctl--profile-desc-get name)))))
           (ehostctl--get-profiles)))
@@ -194,7 +240,8 @@
                                 ("Description" 30 t)]
         tabulated-list-padding 2)
   (tabulated-list-init-header)
-  (add-hook 'tabulated-list-revert-hook #'ehostctl--profile-refresh nil t))
+  (add-hook 'tabulated-list-revert-hook #'ehostctl--profile-refresh nil t)
+  (add-hook 'tabulated-list-revert-hook #'ehostctl--apply-stripes 90 t))
 
 (defun ehostctl--profile-refresh ()
   "Refresh profile list entries."
@@ -296,7 +343,9 @@
                              (status (nth 2 h))
                              (note (ehostctl--notes-get
                                     ehostctl--current-profile (nth 1 h))))
-                         (list idx (vector ip host status note))))
+                         (list idx (vector ip host
+                                          (ehostctl--propertize-status status)
+                                          note))))
                      hosts)))
 
 (defvar-keymap ehostctl-host-list-mode-map
@@ -314,7 +363,8 @@
                                 ("Note" 30 t)]
         tabulated-list-padding 2)
   (tabulated-list-init-header)
-  (add-hook 'tabulated-list-revert-hook #'ehostctl--host-refresh nil t))
+  (add-hook 'tabulated-list-revert-hook #'ehostctl--host-refresh nil t)
+  (add-hook 'tabulated-list-revert-hook #'ehostctl--apply-stripes 90 t))
 
 (defun ehostctl--host-refresh ()
   "Refresh host list entries."
