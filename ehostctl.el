@@ -23,19 +23,35 @@
 
 (defface ehostctl-stripe-face
   '((((class color) (background light))
-     :background "#f0f0f0")
+     :background "#e8ecf1" :extend t)
     (((class color) (background dark))
-     :background "#2a2a2a"))
+     :background "#232830" :extend t))
   "Face for alternating row stripes."
   :group 'ehostctl)
 
+(defface ehostctl-header-face
+  '((((class color) (background light))
+     :background "#d0d5dd" :foreground "#1a1a2e"
+     :weight bold :extend t)
+    (((class color) (background dark))
+     :background "#3a3f4b" :foreground "#e0e0e0"
+     :weight bold :extend t))
+  "Face for table header line."
+  :group 'ehostctl)
+
 (defface ehostctl-status-on-face
-  '((t :foreground "#50c878" :weight bold))
+  '((((class color) (background light))
+     :foreground "#2e7d32" :weight bold)
+    (((class color) (background dark))
+     :foreground "#66bb6a" :weight bold))
   "Face for enabled (on) status."
   :group 'ehostctl)
 
 (defface ehostctl-status-off-face
-  '((t :foreground "#ff6b6b" :weight bold))
+  '((((class color) (background light))
+     :foreground "#c62828" :weight bold)
+    (((class color) (background dark))
+     :foreground "#ef5350" :weight bold))
   "Face for disabled (off) status."
   :group 'ehostctl)
 
@@ -240,7 +256,8 @@
                                 ("Description" 30 t)]
         tabulated-list-padding 2
         revert-buffer-function #'ehostctl--profile-revert)
-  (tabulated-list-init-header))
+  (tabulated-list-init-header)
+  (face-remap-add-relative 'header-line 'ehostctl-header-face))
 
 (defun ehostctl--profile-revert (&rest _)
   "Revert profile list: refresh data, print, then apply stripes."
@@ -368,7 +385,8 @@
                                 ("Note" 30 t)]
         tabulated-list-padding 2
         revert-buffer-function #'ehostctl--host-revert)
-  (tabulated-list-init-header))
+  (tabulated-list-init-header)
+  (face-remap-add-relative 'header-line 'ehostctl-header-face))
 
 (defun ehostctl--host-revert (&rest _)
   "Revert host list: refresh data, print, then apply stripes."
