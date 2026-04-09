@@ -1,0 +1,22 @@
+repos:
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+
+  - repo: local
+    hooks:
+      - id: elisp-byte-compile
+        name: byte-compile
+        language: system
+        entry: bash -c 'emacs -Q --batch --eval "(setq byte-compile-error-on-warn t)" -f batch-byte-compile "$@" ; rc=$?; rm -f "${@/%/.elc}"; exit $rc' --
+        files: '\.el$'
+        pass_filenames: true
+
+      - id: elisp-checkdoc
+        name: checkdoc
+        language: system
+        entry: emacs -Q --batch --eval "(require 'checkdoc) (let ((f (car command-line-args-left))) (find-file f) (checkdoc-current-buffer t) (let ((buf (get-buffer \"*Style Warnings*\"))) (when (and buf (with-current-buffer buf (> (buffer-size) 0))) (princ (with-current-buffer buf (buffer-string))) (kill-emacs 1))))"
+        files: '\.el$'
+        pass_filenames: true

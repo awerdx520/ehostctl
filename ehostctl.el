@@ -106,7 +106,7 @@
   "Run hostctl with ARGS via sudo.  Signal error on failure."
   (let ((result (apply #'ehostctl--run-sudo args)))
     (unless (zerop (car result))
-      (user-error "hostctl failed: %s" (string-trim (cdr result))))
+      (user-error "Hostctl failed: %s" (string-trim (cdr result))))
     (cdr result)))
 
 (defun ehostctl--parse-json (json-string)
@@ -175,7 +175,7 @@
   (or (gethash (ehostctl--notes-key profile host) ehostctl--notes) ""))
 
 (defun ehostctl--notes-set (profile host note)
-  "Set NOTE for HOST in PROFILE.  Empty string removes the note."
+  "Set NOTE for HOST in PROFILE.  Empty string remove the note."
   (unless ehostctl--notes (ehostctl--notes-load))
   (let ((key (ehostctl--notes-key profile host)))
     (if (string-empty-p note)
@@ -188,7 +188,7 @@
   (ehostctl--notes-get profile ""))
 
 (defun ehostctl--profile-desc-set (profile desc)
-  "Set DESC for PROFILE.  Empty string removes the description."
+  "Set DESC for PROFILE.  Empty string remove the description."
   (ehostctl--notes-set profile "" desc))
 
 
@@ -315,7 +315,7 @@
   "Remove the profile at point."
   (interactive)
   (let ((profile (ehostctl--profile-at-point)))
-    (when (yes-or-no-p (format "Remove profile '%s'? This cannot be undone. " profile))
+    (when (yes-or-no-p (format "Remove profile '%s' (cannot be undone)? " profile))
       (ehostctl--run-sudo! "remove" profile)
       (message "Removed profile: %s" profile)
       (revert-buffer))))
@@ -419,7 +419,7 @@ Return the list of hosts copied."
   "Restore hosts file from a backup."
   (interactive)
   (let ((file (read-file-name "Restore from: " "~/")))
-    (when (yes-or-no-p "Restore will OVERWRITE current hosts file. Continue? ")
+    (when (yes-or-no-p "Restore will OVERWRITE current hosts file.  Continue? ")
       (ehostctl--run-sudo! "restore" "--from" (expand-file-name file))
       (message "Hosts file restored from: %s" file)
       (revert-buffer))))
@@ -596,8 +596,10 @@ Return the list of hosts copied."
 
 ;;;; Evil Integration
 
-(defun ehostctl--evil-setup ()
-  "Set up Evil keybindings for ehostctl modes."
+(declare-function evil-set-initial-state "evil-core" (state mode))
+(declare-function evil-define-key "evil-core" (state keymap &rest bindings))
+
+(with-eval-after-load 'evil
   (evil-set-initial-state 'ehostctl-profile-list-mode 'normal)
   (evil-set-initial-state 'ehostctl-host-list-mode 'normal)
 
@@ -628,9 +630,6 @@ Return the list of hosts copied."
     "q"   #'quit-window
     "?"   #'ehostctl-host-transient))
 
-(with-eval-after-load 'evil
-  (ehostctl--evil-setup))
-
 ;;;; Entry Point
 
 ;;;###autoload
@@ -638,7 +637,7 @@ Return the list of hosts copied."
   "Open ehostctl profile list."
   (interactive)
   (unless (executable-find ehostctl-hostctl-executable)
-    (user-error "hostctl not found. Install from https://github.com/guumaster/hostctl"))
+    (user-error "Hostctl not found.  Install from https://github.com/guumaster/hostctl"))
   (let ((buf (get-buffer-create "*ehostctl*")))
     (with-current-buffer buf
       (ehostctl-profile-list-mode)

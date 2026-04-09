@@ -36,7 +36,12 @@ Emacs frontend for [hostctl](https://github.com/guumaster/hostctl) — 在 Emacs
 
 ```elisp
 (use-package ehostctl
-  :straight (:host github :repo "user/ehostctl"))
+  :straight '(ehostctl :type git :host github
+                       :repo "awerdx520/ehostctl" :branch "master")
+  :general (leader! "te" 'ehostctl)
+  :init
+  (setq ehostctl-notes-file
+        (expand-file-name "ehostctl-notes.eld" xxxx-cache-dir)))
 ```
 
 ## 使用
