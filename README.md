@@ -1,0 +1,90 @@
+# ehostctl
+
+Emacs frontend for [hostctl](https://github.com/guumaster/hostctl) — 在 Emacs 中管理 `/etc/hosts` profiles 和 host 条目。
+
+## 功能
+
+- **两层视图** — 第一层展示 profiles 概览，回车进入第二层查看具体 host 条目
+- **Transient 菜单** — 按 `?` 调出操作菜单，提供操作可发现性
+- **Profile 管理** — 启用/禁用/切换/添加/删除 profile
+- **Host 条目管理** — 在 profile 内添加/删除单条 host 记录
+- **备份与恢复** — 支持 hosts 文件的备份和恢复
+
+## 依赖
+
+- Emacs 28.1+
+- [hostctl](https://github.com/guumaster/hostctl) CLI 工具
+- `sudo` 权限（写操作需要）
+
+## 安装
+
+### 手动安装
+
+```elisp
+(add-to-list 'load-path "/path/to/ehostctl")
+(require 'ehostctl)
+```
+
+### use-package
+
+```elisp
+(use-package ehostctl
+  :load-path "/path/to/ehostctl")
+```
+
+### use-package + straight.el
+
+```elisp
+(use-package ehostctl
+  :straight (:host github :repo "user/ehostctl"))
+```
+
+## 使用
+
+```
+M-x ehostctl
+```
+
+打开 profile 列表视图。
+
+### Profile 列表快捷键
+
+| 键 | 操作 |
+|----|------|
+| `RET` | 进入 profile，查看 host 条目 |
+| `e` | 启用 profile |
+| `d` | 禁用 profile |
+| `t` | 切换 profile 状态 |
+| `D` | 删除 profile |
+| `a` | 添加新 profile |
+| `b` | 备份 hosts 文件 |
+| `R` | 从备份恢复 |
+| `g` | 刷新列表 |
+| `?` | 打开操作菜单 |
+
+### Host 条目快捷键
+
+| 键 | 操作 |
+|----|------|
+| `a` | 添加 host 条目 |
+| `d` | 删除 host 条目 |
+| `g` | 刷新列表 |
+| `q` | 返回 profile 列表 |
+| `?` | 打开操作菜单 |
+
+## 自定义
+
+```elisp
+;; hostctl 可执行文件路径（默认 "hostctl"）
+(setq ehostctl-hostctl-executable "hostctl")
+
+;; 写操作是否使用 sudo（默认 t）
+(setq ehostctl-use-sudo t)
+
+;; sudo 可执行文件路径（默认 "sudo"）
+(setq ehostctl-sudo-executable "sudo")
+```
+
+## License
+
+GPL-3.0
