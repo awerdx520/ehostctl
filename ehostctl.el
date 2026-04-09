@@ -238,10 +238,15 @@
                                 ("Status" 8 t)
                                 ("Entries" 8 t)
                                 ("Description" 30 t)]
-        tabulated-list-padding 2)
-  (tabulated-list-init-header)
-  (add-hook 'tabulated-list-revert-hook #'ehostctl--profile-refresh nil t)
-  (add-hook 'tabulated-list-revert-hook #'ehostctl--apply-stripes 90 t))
+        tabulated-list-padding 2
+        revert-buffer-function #'ehostctl--profile-revert)
+  (tabulated-list-init-header))
+
+(defun ehostctl--profile-revert (&rest _)
+  "Revert profile list: refresh data, print, then apply stripes."
+  (ehostctl--profile-refresh)
+  (tabulated-list-print t)
+  (ehostctl--apply-stripes))
 
 (defun ehostctl--profile-refresh ()
   "Refresh profile list entries."
@@ -361,10 +366,15 @@
                                 ("Host" 40 t)
                                 ("Status" 8 t)
                                 ("Note" 30 t)]
-        tabulated-list-padding 2)
-  (tabulated-list-init-header)
-  (add-hook 'tabulated-list-revert-hook #'ehostctl--host-refresh nil t)
-  (add-hook 'tabulated-list-revert-hook #'ehostctl--apply-stripes 90 t))
+        tabulated-list-padding 2
+        revert-buffer-function #'ehostctl--host-revert)
+  (tabulated-list-init-header))
+
+(defun ehostctl--host-revert (&rest _)
+  "Revert host list: refresh data, print, then apply stripes."
+  (ehostctl--host-refresh)
+  (tabulated-list-print t)
+  (ehostctl--apply-stripes))
 
 (defun ehostctl--host-refresh ()
   "Refresh host list entries."
