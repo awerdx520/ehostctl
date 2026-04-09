@@ -41,6 +41,12 @@
   :type 'string
   :group 'ehostctl)
 
+(defcustom ehostctl-notes-file
+  (locate-user-emacs-file "ehostctl-notes.eld")
+  "File to persist host annotations."
+  :type 'file
+  :group 'ehostctl)
+
 ;;;; CLI Interaction Layer
 
 (defun ehostctl--run (&rest args)
@@ -73,6 +79,48 @@
     (if (or (string-empty-p trimmed) (string= trimmed "null"))
         nil
       (json-read-from-string trimmed))))
+
+;;;; Notes Storage
+
+(defvar ehostctl--notes nil
+  "Hash table mapping \"PROFILE:HOST\" to note strings.")
+
+(defun ehostctl--notes-key (profile host)
+  "Return storage key for PROFILE and HOST."
+  (concat profile ":" host))
+
+(defun ehostctl--notes-load ()
+  "Load notes from `ehostctl-notes-file'."
+  (setq ehostctl--notes (make-hash-table :test #'equal))
+  (when (file-exists-p ehostctl-notes-file)
+    (let ((alist (with-temp-buffer
+                   (insert-file-contents ehostctl-notes-file)
+                   (read (current-buffer)))))
+      (dolist (pair alist)
+        (puthash (car pair) (cdr pair) ehostctl--notes)))))
+
+(defun ehostctl--notes-save ()
+  "Save notes to `ehostctl-notes-file'."
+  (let ((alist nil))
+    (maphash (lambda (k v) (push (cons k v) alist)) ehostctl--notes)
+    (with-temp-file ehostctl-notes-file
+      (let ((print-level nil)
+            (print-length nil))
+        (prin1 alist (current-buffer))))))
+
+(defun ehostctl--notes-get (profile host)
+  "Get note for HOST in PROFILE, or empty string."
+  (unless ehostctl--notes (ehostctl--notes-load))
+  (or (gethash (ehostctl--notes-key profile host) ehostctl--notes) ""))
+
+(defun ehostctl--notes-set (profile host note)
+  "Set NOTE for HOST in PROFILE.  Empty string removes the note."
+  (unless ehostctl--notes (ehostctl--notes-load))
+  (let ((key (ehostctl--notes-key profile host)))
+    (if (string-empty-p note)
+        (remhash key ehostctl--notes)
+      (puthash key note ehostctl--notes)))
+  (ehostctl--notes-save))
 
 ;;;; Data Model
 
@@ -223,21 +271,25 @@
     (seq-map-indexed (lambda (h idx)
                        (let ((ip (nth 0 h))
                              (host (nth 1 h))
-                             (status (nth 2 h)))
-                         (list idx (vector ip host status))))
+                             (status (nth 2 h))
+                             (note (ehostctl--notes-get
+                                    ehostctl--current-profile (nth 1 h))))
+                         (list idx (vector ip host status note))))
                      hosts)))
 
 (defvar-keymap ehostctl-host-list-mode-map
   :doc "Keymap for `ehostctl-host-list-mode'."
   "a" #'ehostctl-host-add
   "d" #'ehostctl-host-remove
+  "n" #'ehostctl-host-annotate
   "?" #'ehostctl-host-transient)
 
 (define-derived-mode ehostctl-host-list-mode tabulated-list-mode "Hosts"
   "Major mode for listing hosts in a profile."
   (setq tabulated-list-format [("IP" 20 t)
                                 ("Host" 40 t)
-                                ("Status" 8 t)]
+                                ("Status" 8 t)
+                                ("Note" 30 t)]
         tabulated-list-padding 2)
   (tabulated-list-init-header)
   (add-hook 'tabulated-list-revert-hook #'ehostctl--host-refresh nil t))
@@ -267,6 +319,18 @@
            (split-string domains))
     (message "Added to profile: %s" ehostctl--current-profile)
     (revert-buffer)))
+
+(defun ehostctl-host-annotate ()
+  "Add or edit a note for the host entry at point."
+  (interactive)
+  (let* ((entry (or (tabulated-list-get-entry)
+                    (user-error "No entry at point")))
+         (host (aref entry 1))
+         (old-note (ehostctl--notes-get ehostctl--current-profile host))
+         (new-note (read-string (format "Note for %s: " host) old-note)))
+    (ehostctl--notes-set ehostctl--current-profile host new-note)
+    (revert-buffer)
+    (message (if (string-empty-p new-note) "Note removed" "Note saved"))))
 
 (defun ehostctl-host-remove ()
   "Remove the host entry at point from the current profile."
@@ -298,8 +362,9 @@
 (transient-define-prefix ehostctl-host-transient ()
   "Transient menu for ehostctl host operations."
   ["Host Actions"
-   ("a" "Add"    ehostctl-host-add)
-   ("d" "Remove" ehostctl-host-remove)]
+   ("a" "Add"      ehostctl-host-add)
+   ("d" "Remove"   ehostctl-host-remove)
+   ("n" "Annotate" ehostctl-host-annotate)]
   ["Navigation"
    ("g" "Refresh" revert-buffer)
    ("q" "Quit"    quit-window)])
@@ -327,6 +392,7 @@
   (evil-define-key 'normal ehostctl-host-list-mode-map
     "a"   #'ehostctl-host-add
     "x"   #'ehostctl-host-remove
+    "n"   #'ehostctl-host-annotate
     "gr"  #'revert-buffer
     "q"   #'quit-window
     "?"   #'ehostctl-host-transient))
