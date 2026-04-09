@@ -212,5 +212,73 @@
       (message "Hosts file restored from: %s" file)
       (revert-buffer))))
 
+;;;; Host List Mode (Second Layer)
+
+(defvar-local ehostctl--current-profile nil
+  "The profile name displayed in the current host list buffer.")
+
+(defun ehostctl--host-entries ()
+  "Build `tabulated-list-entries' for host list."
+  (let ((hosts (ehostctl--get-hosts ehostctl--current-profile)))
+    (seq-map-indexed (lambda (h idx)
+                       (let ((ip (nth 0 h))
+                             (host (nth 1 h))
+                             (status (nth 2 h)))
+                         (list idx (vector ip host status))))
+                     hosts)))
+
+(defvar-keymap ehostctl-host-list-mode-map
+  :doc "Keymap for `ehostctl-host-list-mode'."
+  "a" #'ehostctl-host-add
+  "d" #'ehostctl-host-remove
+  "?" #'ehostctl-host-transient)
+
+(define-derived-mode ehostctl-host-list-mode tabulated-list-mode "Hosts"
+  "Major mode for listing hosts in a profile."
+  (setq tabulated-list-format [("IP" 20 t)
+                                ("Host" 40 t)
+                                ("Status" 8 t)]
+        tabulated-list-padding 2)
+  (tabulated-list-init-header)
+  (add-hook 'tabulated-list-revert-hook #'ehostctl--host-refresh nil t))
+
+(defun ehostctl--host-refresh ()
+  "Refresh host list entries."
+  (setq tabulated-list-entries (ehostctl--host-entries)))
+
+(defun ehostctl-hosts (profile)
+  "Open host list for PROFILE."
+  (let ((buf (get-buffer-create (format "*ehostctl: %s*" profile))))
+    (with-current-buffer buf
+      (ehostctl-host-list-mode)
+      (setq ehostctl--current-profile profile)
+      (setq header-line-format (format " Profile: %s" profile))
+      (revert-buffer))
+    (switch-to-buffer buf)))
+
+(defun ehostctl-host-add ()
+  "Add a host entry to the current profile."
+  (interactive)
+  (let* ((ip (read-string "IP address: " "127.0.0.1"))
+         (domains (read-string "Domains (space separated): ")))
+    (apply #'ehostctl--run-sudo!
+           "add" "domains" ehostctl--current-profile
+           "--ip" ip
+           (split-string domains))
+    (message "Added to profile: %s" ehostctl--current-profile)
+    (revert-buffer)))
+
+(defun ehostctl-host-remove ()
+  "Remove the host entry at point from the current profile."
+  (interactive)
+  (let* ((entry (tabulated-list-get-entry))
+         (host (aref entry 1)))
+    (unless entry (user-error "No entry at point"))
+    (when (yes-or-no-p (format "Remove '%s' from profile '%s'? "
+                               host ehostctl--current-profile))
+      (ehostctl--run-sudo! "remove" "domains" ehostctl--current-profile host)
+      (message "Removed %s" host)
+      (revert-buffer))))
+
 (provide 'ehostctl)
 ;;; ehostctl.el ends here
