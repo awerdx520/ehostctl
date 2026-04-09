@@ -280,5 +280,43 @@
       (message "Removed %s" host)
       (revert-buffer))))
 
+;;;; Transient Menus
+
+(transient-define-prefix ehostctl-transient ()
+  "Transient menu for ehostctl profile operations."
+  ["Profile Actions"
+   ("e" "Enable"  ehostctl-profile-enable)
+   ("d" "Disable" ehostctl-profile-disable)
+   ("t" "Toggle"  ehostctl-profile-toggle)
+   ("D" "Remove"  ehostctl-profile-remove)
+   ("a" "Add"     ehostctl-profile-add)]
+  ["Global"
+   ("b" "Backup"  ehostctl-backup)
+   ("R" "Restore" ehostctl-restore)
+   ("g" "Refresh" revert-buffer)])
+
+(transient-define-prefix ehostctl-host-transient ()
+  "Transient menu for ehostctl host operations."
+  ["Host Actions"
+   ("a" "Add"    ehostctl-host-add)
+   ("d" "Remove" ehostctl-host-remove)]
+  ["Navigation"
+   ("g" "Refresh" revert-buffer)
+   ("q" "Quit"    quit-window)])
+
+;;;; Entry Point
+
+;;;###autoload
+(defun ehostctl ()
+  "Open ehostctl profile list."
+  (interactive)
+  (unless (executable-find ehostctl-hostctl-executable)
+    (user-error "hostctl not found. Install from https://github.com/guumaster/hostctl"))
+  (let ((buf (get-buffer-create "*ehostctl*")))
+    (with-current-buffer buf
+      (ehostctl-profile-list-mode)
+      (revert-buffer))
+    (switch-to-buffer buf)))
+
 (provide 'ehostctl)
 ;;; ehostctl.el ends here
