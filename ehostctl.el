@@ -597,13 +597,13 @@ Return the list of hosts copied."
 ;;;; Evil Integration
 
 (declare-function evil-set-initial-state "evil-core" (state mode))
-(declare-function evil-define-key "evil-core" (state keymap &rest bindings))
+(declare-function evil-define-key* "evil-common" (state keymap &rest bindings))
 
 (with-eval-after-load 'evil
   (evil-set-initial-state 'ehostctl-profile-list-mode 'normal)
   (evil-set-initial-state 'ehostctl-host-list-mode 'normal)
 
-  (evil-define-key 'normal ehostctl-profile-list-mode-map
+  (evil-define-key* 'normal ehostctl-profile-list-mode-map
     (kbd "RET") #'ehostctl-profile-enter
     "e"   #'ehostctl-profile-enable
     "d"   #'ehostctl-profile-disable
@@ -620,7 +620,7 @@ Return the list of hosts copied."
     "q"   #'quit-window
     "?"   #'ehostctl-transient)
 
-  (evil-define-key 'normal ehostctl-host-list-mode-map
+  (evil-define-key* 'normal ehostctl-host-list-mode-map
     "a"   #'ehostctl-host-add
     "x"   #'ehostctl-host-remove
     "c"   #'ehostctl-host-copy
