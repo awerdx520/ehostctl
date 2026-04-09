@@ -304,6 +304,36 @@
    ("g" "Refresh" revert-buffer)
    ("q" "Quit"    quit-window)])
 
+;;;; Evil Integration
+
+(defun ehostctl--evil-setup ()
+  "Set up Evil keybindings for ehostctl modes."
+  (evil-set-initial-state 'ehostctl-profile-list-mode 'normal)
+  (evil-set-initial-state 'ehostctl-host-list-mode 'normal)
+
+  (evil-define-key 'normal ehostctl-profile-list-mode-map
+    (kbd "RET") #'ehostctl-profile-enter
+    "e"   #'ehostctl-profile-enable
+    "d"   #'ehostctl-profile-disable
+    "t"   #'ehostctl-profile-toggle
+    "x"   #'ehostctl-profile-remove
+    "a"   #'ehostctl-profile-add
+    "b"   #'ehostctl-backup
+    "R"   #'ehostctl-restore
+    "gr"  #'revert-buffer
+    "q"   #'quit-window
+    "?"   #'ehostctl-transient)
+
+  (evil-define-key 'normal ehostctl-host-list-mode-map
+    "a"   #'ehostctl-host-add
+    "x"   #'ehostctl-host-remove
+    "gr"  #'revert-buffer
+    "q"   #'quit-window
+    "?"   #'ehostctl-host-transient))
+
+(with-eval-after-load 'evil
+  (ehostctl--evil-setup))
+
 ;;;; Entry Point
 
 ;;;###autoload
