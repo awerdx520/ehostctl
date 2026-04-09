@@ -104,5 +104,113 @@
                  (alist-get 'Status entry))))
        entries))))
 
+;;;; Profile List Mode (First Layer)
+
+(defun ehostctl--profile-entries ()
+  "Build `tabulated-list-entries' for profile list."
+  (mapcar (lambda (p)
+            (let ((name (nth 0 p))
+                  (status (nth 1 p))
+                  (count (nth 2 p)))
+              (list name (vector name status (number-to-string count)))))
+          (ehostctl--get-profiles)))
+
+(defvar-keymap ehostctl-profile-list-mode-map
+  :doc "Keymap for `ehostctl-profile-list-mode'."
+  "RET" #'ehostctl-profile-enter
+  "e"   #'ehostctl-profile-enable
+  "d"   #'ehostctl-profile-disable
+  "t"   #'ehostctl-profile-toggle
+  "D"   #'ehostctl-profile-remove
+  "a"   #'ehostctl-profile-add
+  "b"   #'ehostctl-backup
+  "R"   #'ehostctl-restore
+  "?"   #'ehostctl-transient)
+
+(define-derived-mode ehostctl-profile-list-mode tabulated-list-mode "Profiles"
+  "Major mode for listing hostctl profiles."
+  (setq tabulated-list-format [("Profile" 20 t)
+                                ("Status" 8 t)
+                                ("Entries" 8 t)]
+        tabulated-list-padding 2)
+  (tabulated-list-init-header)
+  (add-hook 'tabulated-list-revert-hook #'ehostctl--profile-refresh nil t))
+
+(defun ehostctl--profile-refresh ()
+  "Refresh profile list entries."
+  (setq tabulated-list-entries (ehostctl--profile-entries)))
+
+(defun ehostctl--profile-at-point ()
+  "Return the profile name at point."
+  (or (tabulated-list-get-id)
+      (user-error "No profile at point")))
+
+(defun ehostctl-profile-enter ()
+  "Enter the profile at point, showing its host entries."
+  (interactive)
+  (ehostctl-hosts (ehostctl--profile-at-point)))
+
+(defun ehostctl-profile-enable ()
+  "Enable the profile at point."
+  (interactive)
+  (let ((profile (ehostctl--profile-at-point)))
+    (ehostctl--run-sudo! "enable" profile)
+    (message "Enabled profile: %s" profile)
+    (revert-buffer)))
+
+(defun ehostctl-profile-disable ()
+  "Disable the profile at point."
+  (interactive)
+  (let ((profile (ehostctl--profile-at-point)))
+    (ehostctl--run-sudo! "disable" profile)
+    (message "Disabled profile: %s" profile)
+    (revert-buffer)))
+
+(defun ehostctl-profile-toggle ()
+  "Toggle the profile at point."
+  (interactive)
+  (let ((profile (ehostctl--profile-at-point)))
+    (ehostctl--run-sudo! "toggle" profile)
+    (message "Toggled profile: %s" profile)
+    (revert-buffer)))
+
+(defun ehostctl-profile-remove ()
+  "Remove the profile at point."
+  (interactive)
+  (let ((profile (ehostctl--profile-at-point)))
+    (when (yes-or-no-p (format "Remove profile '%s'? This cannot be undone. " profile))
+      (ehostctl--run-sudo! "remove" profile)
+      (message "Removed profile: %s" profile)
+      (revert-buffer))))
+
+(defun ehostctl-profile-add ()
+  "Add a new host entry to a profile."
+  (interactive)
+  (let* ((profile (read-string "Profile name: "))
+         (ip (read-string "IP address: " "127.0.0.1"))
+         (domains (read-string "Domains (space separated): ")))
+    (apply #'ehostctl--run-sudo!
+           "add" "domains" profile
+           "--ip" ip
+           (split-string domains))
+    (message "Added to profile: %s" profile)
+    (revert-buffer)))
+
+(defun ehostctl-backup ()
+  "Backup the hosts file."
+  (interactive)
+  (let ((path (read-directory-name "Backup directory: " "~/")))
+    (ehostctl--run-sudo! "backup" "--path" (expand-file-name path))
+    (message "Hosts file backed up to: %s" path)))
+
+(defun ehostctl-restore ()
+  "Restore hosts file from a backup."
+  (interactive)
+  (let ((file (read-file-name "Restore from: " "~/")))
+    (when (yes-or-no-p "Restore will OVERWRITE current hosts file. Continue? ")
+      (ehostctl--run-sudo! "restore" "--from" (expand-file-name file))
+      (message "Hosts file restored from: %s" file)
+      (revert-buffer))))
+
 (provide 'ehostctl)
 ;;; ehostctl.el ends here
