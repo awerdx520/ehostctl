@@ -122,6 +122,14 @@
       (puthash key note ehostctl--notes)))
   (ehostctl--notes-save))
 
+(defun ehostctl--profile-desc-get (profile)
+  "Get description for PROFILE, or empty string."
+  (ehostctl--notes-get profile ""))
+
+(defun ehostctl--profile-desc-set (profile desc)
+  "Set DESC for PROFILE.  Empty string removes the description."
+  (ehostctl--notes-set profile "" desc))
+
 ;;;; Data Model
 
 (defun ehostctl--get-profiles ()
@@ -160,7 +168,9 @@
             (let ((name (nth 0 p))
                   (status (nth 1 p))
                   (count (nth 2 p)))
-              (list name (vector name status (number-to-string count)))))
+              (list name (vector name status
+                                 (number-to-string count)
+                                 (ehostctl--profile-desc-get name)))))
           (ehostctl--get-profiles)))
 
 (defvar-keymap ehostctl-profile-list-mode-map
@@ -171,6 +181,7 @@
   "t"   #'ehostctl-profile-toggle
   "D"   #'ehostctl-profile-remove
   "a"   #'ehostctl-profile-add
+  "n"   #'ehostctl-profile-describe
   "b"   #'ehostctl-backup
   "R"   #'ehostctl-restore
   "?"   #'ehostctl-transient)
@@ -179,7 +190,8 @@
   "Major mode for listing hostctl profiles."
   (setq tabulated-list-format [("Profile" 20 t)
                                 ("Status" 8 t)
-                                ("Entries" 8 t)]
+                                ("Entries" 8 t)
+                                ("Description" 30 t)]
         tabulated-list-padding 2)
   (tabulated-list-init-header)
   (add-hook 'tabulated-list-revert-hook #'ehostctl--profile-refresh nil t))
@@ -230,6 +242,16 @@
       (ehostctl--run-sudo! "remove" profile)
       (message "Removed profile: %s" profile)
       (revert-buffer))))
+
+(defun ehostctl-profile-describe ()
+  "Add or edit a description for the profile at point."
+  (interactive)
+  (let* ((profile (ehostctl--profile-at-point))
+         (old-desc (ehostctl--profile-desc-get profile))
+         (new-desc (read-string (format "Description for %s: " profile) old-desc)))
+    (ehostctl--profile-desc-set profile new-desc)
+    (revert-buffer)
+    (message (if (string-empty-p new-desc) "Description removed" "Description saved"))))
 
 (defun ehostctl-profile-add ()
   "Add a new host entry to a profile."
@@ -349,11 +371,12 @@
 (transient-define-prefix ehostctl-transient ()
   "Transient menu for ehostctl profile operations."
   ["Profile Actions"
-   ("e" "Enable"  ehostctl-profile-enable)
-   ("d" "Disable" ehostctl-profile-disable)
-   ("t" "Toggle"  ehostctl-profile-toggle)
-   ("D" "Remove"  ehostctl-profile-remove)
-   ("a" "Add"     ehostctl-profile-add)]
+   ("e" "Enable"   ehostctl-profile-enable)
+   ("d" "Disable"  ehostctl-profile-disable)
+   ("t" "Toggle"   ehostctl-profile-toggle)
+   ("D" "Remove"   ehostctl-profile-remove)
+   ("a" "Add"      ehostctl-profile-add)
+   ("n" "Describe" ehostctl-profile-describe)]
   ["Global"
    ("b" "Backup"  ehostctl-backup)
    ("R" "Restore" ehostctl-restore)
@@ -383,6 +406,7 @@
     "t"   #'ehostctl-profile-toggle
     "x"   #'ehostctl-profile-remove
     "a"   #'ehostctl-profile-add
+    "n"   #'ehostctl-profile-describe
     "b"   #'ehostctl-backup
     "R"   #'ehostctl-restore
     "gr"  #'revert-buffer
