@@ -192,6 +192,17 @@
   (ehostctl--notes-set profile "" desc))
 
 
+;;;; Profile Name Normalization
+
+(defun ehostctl--normalize-profile-name (name)
+  "Normalize profile NAME to lowercase.
+Hostctl silently adds entries to the default profile when given
+uppercase names, so all user-supplied names must be downcased."
+  (let ((normalized (downcase name)))
+    (unless (string= name normalized)
+      (message "Profile name lowered to '%s' (hostctl requires lowercase)" normalized))
+    normalized))
+
 ;;;; Data Model
 
 (defun ehostctl--get-profiles ()
@@ -357,7 +368,8 @@ Return the list of hosts copied."
   "Copy the profile at point to a new profile."
   (interactive)
   (let* ((source (ehostctl--profile-at-point))
-         (target (read-string (format "Copy '%s' to: " source))))
+         (target (ehostctl--normalize-profile-name
+                  (read-string (format "Copy '%s' to: " source)))))
     (when (string-empty-p target)
       (user-error "Profile name cannot be empty"))
     (ehostctl--copy-profile-entries source target)
@@ -368,10 +380,11 @@ Return the list of hosts copied."
   "Merge the profile at point into another, removing the source."
   (interactive)
   (let* ((source (ehostctl--profile-at-point))
-         (target (completing-read
-                  (format "Merge '%s' into: " source)
-                  (remove source (ehostctl--profile-names))
-                  nil nil)))
+         (target (ehostctl--normalize-profile-name
+                  (completing-read
+                   (format "Merge '%s' into: " source)
+                   (remove source (ehostctl--profile-names))
+                   nil nil))))
     (when (string-empty-p target)
       (user-error "Profile name cannot be empty"))
     (when (yes-or-no-p (format "Merge '%s' into '%s' and remove '%s'? "
@@ -386,7 +399,8 @@ Return the list of hosts copied."
   "Rename the profile at point."
   (interactive)
   (let* ((old-name (ehostctl--profile-at-point))
-         (new-name (read-string (format "Rename '%s' to: " old-name))))
+         (new-name (ehostctl--normalize-profile-name
+                    (read-string (format "Rename '%s' to: " old-name)))))
     (when (string-empty-p new-name)
       (user-error "Profile name cannot be empty"))
     (let ((hosts (ehostctl--copy-profile-entries old-name new-name)))
@@ -398,7 +412,8 @@ Return the list of hosts copied."
 (defun ehostctl-profile-add ()
   "Add a new host entry to a profile."
   (interactive)
-  (let* ((profile (read-string "Profile name: "))
+  (let* ((profile (ehostctl--normalize-profile-name
+                   (read-string "Profile name: ")))
          (ip (read-string "IP address: " "127.0.0.1"))
          (domains (read-string "Domains (space separated): ")))
     (apply #'ehostctl--run-sudo!
@@ -514,11 +529,12 @@ Return the list of hosts copied."
                     (user-error "No entry at point")))
          (ip (aref entry 0))
          (host (aref entry 1))
-         (target (completing-read
-                  (format "Copy '%s' to profile: " host)
-                  (remove ehostctl--current-profile
-                          (ehostctl--profile-names))
-                  nil nil)))
+         (target (ehostctl--normalize-profile-name
+                  (completing-read
+                   (format "Copy '%s' to profile: " host)
+                   (remove ehostctl--current-profile
+                           (ehostctl--profile-names))
+                   nil nil))))
     (when (string-empty-p target)
       (user-error "Profile name cannot be empty"))
     (ehostctl--run-sudo! "add" "domains" target "--ip" ip host)
@@ -535,11 +551,12 @@ Return the list of hosts copied."
                     (user-error "No entry at point")))
          (ip (aref entry 0))
          (host (aref entry 1))
-         (target (completing-read
-                  (format "Move '%s' to profile: " host)
-                  (remove ehostctl--current-profile
-                          (ehostctl--profile-names))
-                  nil nil)))
+         (target (ehostctl--normalize-profile-name
+                  (completing-read
+                   (format "Move '%s' to profile: " host)
+                   (remove ehostctl--current-profile
+                           (ehostctl--profile-names))
+                   nil nil))))
     (when (string-empty-p target)
       (user-error "Profile name cannot be empty"))
     (ehostctl--run-sudo! "add" "domains" target "--ip" ip host)
