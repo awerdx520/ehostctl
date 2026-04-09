@@ -74,5 +74,35 @@
         nil
       (json-read-from-string trimmed))))
 
+;;;; Data Model
+
+(defun ehostctl--get-profiles ()
+  "Return list of (NAME STATUS ENTRY-COUNT) for all profiles."
+  (let* ((result (ehostctl--run "list" "-o" "json"))
+         (entries (ehostctl--parse-json (cdr result)))
+         (table (make-hash-table :test #'equal)))
+    (when entries
+      (seq-doseq (entry entries)
+        (let* ((name (alist-get 'Profile entry))
+               (status (alist-get 'Status entry))
+               (existing (gethash name table)))
+          (if existing
+              (puthash name (list name status (1+ (nth 2 existing))) table)
+            (puthash name (list name status 1) table)))))
+    (hash-table-values table)))
+
+(defun ehostctl--get-hosts (profile)
+  "Return list of (IP HOST STATUS) for PROFILE."
+  (let* ((result (ehostctl--run "list" "-o" "json"))
+         (entries (ehostctl--parse-json (cdr result))))
+    (when entries
+      (seq-keep
+       (lambda (entry)
+         (when (string= (alist-get 'Profile entry) profile)
+           (list (alist-get 'IP entry)
+                 (alist-get 'Host entry)
+                 (alist-get 'Status entry))))
+       entries))))
+
 (provide 'ehostctl)
 ;;; ehostctl.el ends here
