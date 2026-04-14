@@ -518,9 +518,12 @@ Return the list of hosts copied."
 (defun ehostctl-backup ()
   "Backup the hosts file."
   (interactive)
-  (let ((path (read-directory-name "Backup directory: " "~/")))
-    (ehostctl--run-sudo! "backup" "--path" (expand-file-name path))
-    (message "Hosts file backed up to: %s" path)))
+  (let* ((path (read-directory-name "Backup directory: " "~/"))
+         (dir (expand-file-name path)))
+    (unless (file-directory-p dir)
+      (make-directory dir t))
+    (ehostctl--run-sudo! "backup" "--path" dir)
+    (message "Hosts file backed up to: %s" dir)))
 
 (defun ehostctl-restore ()
   "Restore hosts file from a backup."
