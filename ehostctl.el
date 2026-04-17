@@ -83,6 +83,33 @@
   :type 'file
   :group 'ehostctl)
 
+(defcustom ehostctl-hosts-file "/etc/hosts"
+  "Path to the hosts file."
+  :type 'file
+  :group 'ehostctl)
+
+(defcustom ehostctl-auto-backup t
+  "Whether to automatically backup before write operations."
+  :type 'boolean
+  :group 'ehostctl)
+
+(defcustom ehostctl-backup-directory
+  (expand-file-name "~/.ehostctl/backups/")
+  "Directory for storing automatic backups."
+  :type 'directory
+  :group 'ehostctl)
+
+(defcustom ehostctl-backup-max-count 50
+  "Maximum number of backup files to retain."
+  :type 'integer
+  :group 'ehostctl)
+
+(defcustom ehostctl-periodic-backup-interval 3600
+  "Interval in seconds for periodic backups, or nil to disable."
+  :type '(choice (integer :tag "Seconds")
+                 (const :tag "Disabled" nil))
+  :group 'ehostctl)
+
 ;;;; CLI Interaction Layer
 
 (defun ehostctl--run (&rest args)
@@ -103,7 +130,9 @@
     (apply #'ehostctl--run args)))
 
 (defun ehostctl--run-sudo! (&rest args)
-  "Run hostctl with ARGS via sudo.  Signal error on failure."
+  "Run hostctl with ARGS via sudo.  Signal error on failure.
+Automatically backs up the hosts file before the first write in an operation."
+  (ehostctl--maybe-auto-backup)
   (let ((result (apply #'ehostctl--run-sudo args)))
     (unless (zerop (car result))
       (user-error "Hostctl failed: %s" (string-trim (cdr result))))
@@ -115,6 +144,124 @@
     (if (or (string-empty-p trimmed) (string= trimmed "null"))
         nil
       (json-read-from-string trimmed))))
+
+;;;; Auto Backup
+
+(defvar ehostctl--last-auto-backup-time 0
+  "Timestamp of the last automatic pre-write backup.")
+
+(defvar ehostctl--periodic-timer nil
+  "Timer for periodic backups.")
+
+(defun ehostctl--backup-ensure-dir ()
+  "Ensure `ehostctl-backup-directory' exists."
+  (unless (file-directory-p ehostctl-backup-directory)
+    (make-directory ehostctl-backup-directory t)))
+
+(defun ehostctl--backup-create (type)
+  "Create a backup of the hosts file.
+TYPE is \"auto\", \"periodic\", or \"manual\"."
+  (ehostctl--backup-ensure-dir)
+  (let* ((timestamp (format-time-string "%Y%m%d-%H%M%S"))
+         (filename (format "%s-%s.bak" type timestamp))
+         (dest (expand-file-name filename ehostctl-backup-directory)))
+    (condition-case err
+        (progn
+          (copy-file ehostctl-hosts-file dest t)
+          (ehostctl--backup-cleanup)
+          dest)
+      (error
+       (message "ehostctl: backup failed: %s" (error-message-string err))
+       nil))))
+
+(defun ehostctl--backup-create-async (type &optional callback)
+  "Create a backup of the hosts file asynchronously.
+TYPE is \"auto\", \"periodic\", or \"manual\".
+CALLBACK, if non-nil, is called with the destination path on success."
+  (ehostctl--backup-ensure-dir)
+  (let* ((timestamp (format-time-string "%Y%m%d-%H%M%S"))
+         (filename (format "%s-%s.bak" type timestamp))
+         (dest (expand-file-name filename ehostctl-backup-directory))
+         (src ehostctl-hosts-file))
+    (make-process
+     :name "ehostctl-backup"
+     :buffer nil
+     :command (list "cp" "--" src dest)
+     :sentinel (lambda (proc _event)
+                 (when (and (eq (process-status proc) 'exit)
+                            (zerop (process-exit-status proc)))
+                   (ehostctl--backup-cleanup)
+                   (when callback (funcall callback dest)))))))
+
+(defun ehostctl--backup-cleanup ()
+  "Remove oldest backups exceeding `ehostctl-backup-max-count'."
+  (let* ((files (ehostctl--backup-files))
+         (excess (nthcdr ehostctl-backup-max-count files)))
+    (dolist (f excess)
+      (delete-file f))))
+
+(defun ehostctl--backup-files ()
+  "Return list of backup file paths, newest first."
+  (when (file-directory-p ehostctl-backup-directory)
+    (let ((files (directory-files ehostctl-backup-directory t
+                                 "\\`\\(auto\\|periodic\\|manual\\)-[0-9]\\{8\\}-[0-9]\\{6\\}\\.bak\\'")))
+      (sort files (lambda (a b) (string> a b))))))
+
+(defun ehostctl--backup-parse-filename (path)
+  "Parse backup PATH into (TYPE TIMESTAMP-STRING).
+Return nil if the filename does not match."
+  (let ((name (file-name-nondirectory path)))
+    (when (string-match "\\`\\(auto\\|periodic\\|manual\\)-\\([0-9]\\{8\\}-[0-9]\\{6\\}\\)\\.bak\\'" name)
+      (list (match-string 1 name) (match-string 2 name)))))
+
+(defun ehostctl--backup-list ()
+  "Return backup entries as ((PATH TYPE TIMESTAMP SIZE) ...), newest first."
+  (mapcar (lambda (path)
+            (let ((parsed (ehostctl--backup-parse-filename path)))
+              (list path
+                    (nth 0 parsed)
+                    (nth 1 parsed)
+                    (file-attribute-size (file-attributes path)))))
+          (ehostctl--backup-files)))
+
+(defun ehostctl--maybe-auto-backup ()
+  "Create a pre-write backup if enabled and not already done recently."
+  (when (and ehostctl-auto-backup
+             (> (- (float-time) ehostctl--last-auto-backup-time) 2.0))
+    (ehostctl--backup-create "auto")
+    (setq ehostctl--last-auto-backup-time (float-time))))
+
+(defun ehostctl--periodic-backup-start ()
+  "Start the periodic backup timer if configured."
+  (ehostctl--periodic-backup-stop)
+  (when ehostctl-periodic-backup-interval
+    (setq ehostctl--periodic-timer
+          (run-with-timer ehostctl-periodic-backup-interval
+                          ehostctl-periodic-backup-interval
+                          (lambda ()
+                            (ehostctl--backup-create-async "periodic"))))))
+
+(defun ehostctl--periodic-backup-stop ()
+  "Stop the periodic backup timer."
+  (when (timerp ehostctl--periodic-timer)
+    (cancel-timer ehostctl--periodic-timer)
+    (setq ehostctl--periodic-timer nil)))
+
+;;;###autoload
+(define-minor-mode ehostctl-backup-mode
+  "Global minor mode for periodic hosts file backup.
+When enabled, a timer runs in the background at
+`ehostctl-periodic-backup-interval' seconds, independent of
+whether any ehostctl buffer is open.  Enable in init.el for
+daemon-style backup:
+
+  (ehostctl-backup-mode 1)"
+  :global t
+  :lighter " EhBak"
+  :group 'ehostctl
+  (if ehostctl-backup-mode
+      (ehostctl--periodic-backup-start)
+    (ehostctl--periodic-backup-stop)))
 
 ;;;; Stripe Overlay
 
@@ -353,7 +500,8 @@ uppercase names, so all user-supplied names must be downcased."
   "r"   #'ehostctl-profile-rename
   "n"   #'ehostctl-profile-describe
   "b"   #'ehostctl-backup
-  "R"   #'ehostctl-restore
+  "R"   #'ehostctl-restore-list
+  "U"   #'ehostctl-restore-undo
   "?"   #'ehostctl-transient)
 
 (define-derived-mode ehostctl-profile-list-mode tabulated-list-mode "Profiles"
@@ -516,23 +664,111 @@ Return the list of hosts copied."
        (revert-buffer)))))
 
 (defun ehostctl-backup ()
-  "Backup the hosts file."
+  "Create a manual backup of the hosts file asynchronously."
   (interactive)
-  (let* ((path (read-directory-name "Backup directory: " "~/"))
-         (dir (expand-file-name path)))
-    (unless (file-directory-p dir)
-      (make-directory dir t))
-    (ehostctl--run-sudo! "backup" "--path" dir)
-    (message "Hosts file backed up to: %s" dir)))
+  (ehostctl--backup-create-async
+   "manual"
+   (lambda (path) (message "Hosts file backed up to: %s" path))))
 
-(defun ehostctl-restore ()
-  "Restore hosts file from a backup."
+(defun ehostctl--restore-from (file)
+  "Restore the hosts file from backup FILE."
+  (let ((ehostctl-auto-backup t)
+        (ehostctl--last-auto-backup-time 0))
+    (ehostctl--maybe-auto-backup))
+  (ehostctl--run-sudo "restore" "--from" (expand-file-name file))
+  (message "Hosts file restored from: %s" (file-name-nondirectory file))
+  (when-let ((buf (get-buffer "*ehostctl*")))
+    (with-current-buffer buf (revert-buffer))))
+
+(defun ehostctl-restore-undo ()
+  "Restore from the most recent backup."
   (interactive)
-  (let ((file (read-file-name "Restore from: " "~/")))
+  (let ((backups (ehostctl--backup-files)))
+    (unless backups
+      (user-error "No backups available"))
+    (let* ((latest (car backups))
+           (parsed (ehostctl--backup-parse-filename latest))
+           (ts (nth 1 parsed)))
+      (when (yes-or-no-p (format "Restore from backup %s?  This will OVERWRITE current hosts file." ts))
+        (ehostctl--restore-from latest)))))
+
+;;;; Backup List Mode
+
+(defun ehostctl--backup-format-timestamp (ts)
+  "Format raw timestamp TS (YYYYMMDD-HHMMSS) for display."
+  (if (string-match "\\`\\([0-9]\\{4\\}\\)\\([0-9]\\{2\\}\\)\\([0-9]\\{2\\}\\)-\\([0-9]\\{2\\}\\)\\([0-9]\\{2\\}\\)\\([0-9]\\{2\\}\\)\\'" ts)
+      (format "%s-%s-%s %s:%s:%s"
+              (match-string 1 ts) (match-string 2 ts) (match-string 3 ts)
+              (match-string 4 ts) (match-string 5 ts) (match-string 6 ts))
+    ts))
+
+(defun ehostctl--backup-format-size (size)
+  "Format file SIZE in bytes to human-readable string."
+  (cond
+   ((> size (* 1024 1024)) (format "%.1fM" (/ size (* 1024.0 1024))))
+   ((> size 1024) (format "%.1fK" (/ size 1024.0)))
+   (t (format "%dB" size))))
+
+(defun ehostctl--backup-list-entries ()
+  "Build `tabulated-list-entries' for backup list."
+  (mapcar (lambda (entry)
+            (let ((path (nth 0 entry))
+                  (type (nth 1 entry))
+                  (ts (nth 2 entry))
+                  (size (nth 3 entry)))
+              (list path (vector (ehostctl--backup-format-timestamp ts)
+                                 type
+                                 (ehostctl--backup-format-size size)))))
+          (ehostctl--backup-list)))
+
+(defvar-keymap ehostctl-backup-list-mode-map
+  :doc "Keymap for `ehostctl-backup-list-mode'."
+  "RET" #'ehostctl-backup-list-restore
+  "d"   #'ehostctl-backup-list-delete
+  "q"   #'quit-window)
+
+(define-derived-mode ehostctl-backup-list-mode tabulated-list-mode "Backups"
+  "Major mode for browsing ehostctl backup files."
+  (setq tabulated-list-format [("Timestamp" 22 t)
+                                ("Type" 10 t)
+                                ("Size" 10 t)]
+        tabulated-list-padding 2
+        revert-buffer-function #'ehostctl--backup-list-revert)
+  (tabulated-list-init-header)
+  (face-remap-add-relative 'header-line 'ehostctl-header-face))
+
+(defun ehostctl--backup-list-revert (&rest _)
+  "Revert backup list."
+  (setq tabulated-list-entries (ehostctl--backup-list-entries))
+  (tabulated-list-print t)
+  (ehostctl--apply-stripes))
+
+(defun ehostctl-backup-list-restore ()
+  "Restore hosts file from the backup at point."
+  (interactive)
+  (let ((path (tabulated-list-get-id)))
+    (unless path (user-error "No backup at point"))
     (when (yes-or-no-p "Restore will OVERWRITE current hosts file.  Continue? ")
-      (ehostctl--run-sudo! "restore" "--from" (expand-file-name file))
-      (message "Hosts file restored from: %s" file)
+      (ehostctl--restore-from path)
       (revert-buffer))))
+
+(defun ehostctl-backup-list-delete ()
+  "Delete the backup at point."
+  (interactive)
+  (let ((path (tabulated-list-get-id)))
+    (unless path (user-error "No backup at point"))
+    (when (yes-or-no-p (format "Delete backup %s? " (file-name-nondirectory path)))
+      (delete-file path)
+      (revert-buffer))))
+
+(defun ehostctl-restore-list ()
+  "Open the backup list buffer."
+  (interactive)
+  (let ((buf (get-buffer-create "*ehostctl-backups*")))
+    (with-current-buffer buf
+      (ehostctl-backup-list-mode)
+      (revert-buffer))
+    (switch-to-buffer buf)))
 
 ;;;; Host List Mode (Second Layer)
 
@@ -693,9 +929,11 @@ Return the list of hosts copied."
    ("m" "Merge…"   ehostctl-profile-merge)
    ("r" "Rename"   ehostctl-profile-rename)
    ("n" "Describe" ehostctl-profile-describe)]
-  ["Global"
-   ("b" "Backup"  ehostctl-backup)
-   ("R" "Restore" ehostctl-restore)
+  ["Backup"
+   ("b" "Backup"       ehostctl-backup)
+   ("R" "Restore List" ehostctl-restore-list)
+   ("U" "Undo"         ehostctl-restore-undo)]
+  ["Navigation"
    ("g" "Refresh" revert-buffer)])
 
 (transient-define-prefix ehostctl-host-transient ()
@@ -718,6 +956,7 @@ Return the list of hosts copied."
 (with-eval-after-load 'evil
   (evil-set-initial-state 'ehostctl-profile-list-mode 'normal)
   (evil-set-initial-state 'ehostctl-host-list-mode 'normal)
+  (evil-set-initial-state 'ehostctl-backup-list-mode 'normal)
   (evil-set-initial-state 'ehostctl-edit-mode 'insert)
 
   (evil-define-key* 'normal ehostctl-profile-list-mode-map
@@ -732,7 +971,8 @@ Return the list of hosts copied."
     "r"   #'ehostctl-profile-rename
     "n"   #'ehostctl-profile-describe
     "b"   #'ehostctl-backup
-    "R"   #'ehostctl-restore
+    "R"   #'ehostctl-restore-list
+    "U"   #'ehostctl-restore-undo
     "gr"  #'revert-buffer
     "q"   #'quit-window
     "?"   #'ehostctl-transient)
@@ -745,7 +985,13 @@ Return the list of hosts copied."
     "n"   #'ehostctl-host-describe
     "gr"  #'revert-buffer
     "q"   #'quit-window
-    "?"   #'ehostctl-host-transient))
+    "?"   #'ehostctl-host-transient)
+
+  (evil-define-key* 'normal ehostctl-backup-list-mode-map
+    (kbd "RET") #'ehostctl-backup-list-restore
+    "x"   #'ehostctl-backup-list-delete
+    "gr"  #'revert-buffer
+    "q"   #'quit-window))
 
 ;;;; Entry Point
 
@@ -755,6 +1001,7 @@ Return the list of hosts copied."
   (interactive)
   (unless (executable-find ehostctl-hostctl-executable)
     (user-error "Hostctl not found.  Install from https://github.com/guumaster/hostctl"))
+  (ehostctl-backup-mode 1)
   (let ((buf (get-buffer-create "*ehostctl*")))
     (with-current-buffer buf
       (ehostctl-profile-list-mode)
