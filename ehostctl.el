@@ -110,6 +110,16 @@
                  (const :tag "Disabled" nil))
   :group 'ehostctl)
 
+;;;; Sudo Password Cache
+
+(defvar ehostctl--sudo-cached-password nil
+  "Cached sudo password for the current session.
+Used when `sudo' requires a terminal for password entry.")
+
+(defvar ehostctl--sudo-password-valid-p nil
+  "Non-nil if the cached password is still valid.
+Checked via `sudo -v'.")
+
 ;;;; CLI Interaction Layer
 
 (defun ehostctl--run (&rest args)
@@ -119,14 +129,87 @@
                             nil (current-buffer) nil args)))
       (cons exit-code (buffer-string)))))
 
+(defun ehostctl--sudo-needs-password-p ()
+  "Return non-nil if sudo requires a password for the current user."
+  (let ((exit-code (call-process ehostctl-sudo-executable nil nil nil "-n" "true")))
+    (not (zerop exit-code))))
+
+(defun ehostctl--sudo-get-password ()
+  "Get sudo password, caching it for the session.
+Prompts the user if not cached or cached password is invalid.
+If password verification fails, clears cache and reprompts once."
+  (when (or (not ehostctl--sudo-cached-password)
+            (not ehostctl--sudo-password-valid-p))
+    (let ((password (read-passwd "sudo password: ")))
+      (setq ehostctl--sudo-cached-password password)
+      (setq ehostctl--sudo-password-valid-p t)
+      (ehostctl--sudo-verify-password)
+      ;; 如果验证失败，清除缓存并重新提示
+      (unless ehostctl--sudo-password-valid-p
+        (setq ehostctl--sudo-cached-password nil)
+        (let ((password2 (read-passwd "密码错误，请重新输入 sudo 密码: ")))
+          (setq ehostctl--sudo-cached-password password2)
+          (setq ehostctl--sudo-password-valid-p t)
+          (ehostctl--sudo-verify-password)))))
+  ehostctl--sudo-cached-password)
+
+(defun ehostctl--sudo-verify-password ()
+  "Verify cached password with `sudo -v'.
+Invalidates cache if verification fails."
+  (let ((temp-file (make-temp-file "ehostctl-sudo-")))
+    (unwind-protect
+        (progn
+          (write-region (concat ehostctl--sudo-cached-password "\n") nil temp-file nil 'silent)
+          (let ((exit-code (call-process ehostctl-sudo-executable
+                                         temp-file nil nil
+                                         "-S" "-v")))
+            (setq ehostctl--sudo-password-valid-p (zerop exit-code))))
+      (delete-file temp-file))))
+
 (defun ehostctl--run-sudo (&rest args)
   "Run hostctl with ARGS via sudo, return (EXIT-CODE . OUTPUT)."
   (if ehostctl-use-sudo
-      (with-temp-buffer
-        (let ((exit-code (apply #'call-process ehostctl-sudo-executable
-                                nil (current-buffer) nil
-                                ehostctl-hostctl-executable args)))
-          (cons exit-code (buffer-string))))
+      (if (ehostctl--sudo-needs-password-p)
+          ;; 需要密码：使用 -S 选项
+          (let ((password (ehostctl--sudo-get-password))
+                (temp-file (make-temp-file "ehostctl-sudo-input-"))
+                exit-code output)
+            (unwind-protect
+                (progn
+                  (write-region (concat password "\n") nil temp-file nil 'silent)
+                  (with-temp-buffer
+                    (setq exit-code
+                          (apply #'call-process ehostctl-sudo-executable
+                                 temp-file (current-buffer) nil
+                                 "-S" ehostctl-hostctl-executable args))
+                    (setq output (buffer-string))))
+              (delete-file temp-file))
+            ;; 如果密码错误，重试一次
+            (when (and (not (zerop exit-code))
+                       (string-match-p "incorrect password\\|密码\\|sorry" output))
+              (setq ehostctl--sudo-cached-password nil)
+              (setq ehostctl--sudo-password-valid-p nil)
+              (message "sudo: 密码错误，重试...")
+              ;; 重试
+              (let ((password (ehostctl--sudo-get-password))
+                    (temp-file2 (make-temp-file "ehostctl-sudo-input-")))
+                (unwind-protect
+                    (progn
+                      (write-region (concat password "\n") nil temp-file2 nil 'silent)
+                      (with-temp-buffer
+                        (setq exit-code
+                              (apply #'call-process ehostctl-sudo-executable
+                                     temp-file2 (current-buffer) nil
+                                     "-S" ehostctl-hostctl-executable args))
+                        (setq output (buffer-string))))
+                  (delete-file temp-file2))))
+            (cons exit-code output))
+        ;; 无需密码：直接运行 sudo
+        (with-temp-buffer
+          (let ((exit-code (apply #'call-process ehostctl-sudo-executable
+                                  nil (current-buffer) nil
+                                  ehostctl-hostctl-executable args)))
+            (cons exit-code (buffer-string)))))
     (apply #'ehostctl--run args)))
 
 (defun ehostctl--run-sudo! (&rest args)
